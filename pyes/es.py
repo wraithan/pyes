@@ -14,6 +14,7 @@ except ImportError:
 import logging
 from datetime import date, datetime
 import base64
+import pprint
 import time
 from StringIO import StringIO
 from decimal import Decimal
@@ -42,11 +43,26 @@ def file_to_attachment(filename):
             'content':base64.b64encode(open(filename, 'rb').read())
             }
 
+def dump_json(query, *args, **kw):
+    """
+    Wrapper around json.dumps that prints nicer errors.
+
+    For errors like circular reference error, the exception message contains
+    a well formatted print out of what the offending query was.
+    """
+    try:
+        return json.dumps(query, *args, **kw)
+    except Exception, exc:
+        q = pprint.pformat(query)
+        exc.args = tuple(['%s; query=%s' % (exc.args[0], q)] +
+                         list(exc.args[1:]))
+        raise exc
+
 class ESJsonEncoder(json.JSONEncoder):
     def default(self, value):
         """Convert rogue and mysterious data types.
         Conversion notes:
-        
+
         - ``datetime.date`` and ``datetime.datetime`` objects are
         converted into datetime strings.
         """
@@ -103,7 +119,7 @@ class ES(object):
                  dump_curl=False):
         """
         Init a es object
-        
+
         server: the server name, it can be a list of servers
         timeout: timeout for a call
         bulk_size: size of bulk operation
@@ -196,7 +212,7 @@ class ES(object):
             self._init_connection()
         if body:
             if isinstance(body, dict):
-                body = json.dumps(body, cls=self.encoder)
+                body = dump_json(body, cls=self.encoder)
         else:
             body = ""
         request = RestRequest(method=Method._NAMES_TO_VALUES[method.upper()], uri=path, parameters=params, headers={}, body=body)
@@ -447,7 +463,7 @@ class ES(object):
     def refresh(self, indexes=None, timesleep=1):
         """
         Refresh one or more indices
-        
+
         timesleep: seconds to wait
         """
         self.force_bulk()
@@ -563,15 +579,15 @@ class ES(object):
         Request Parameters
 
         The cluster health API accepts the following request parameters:
-        - level:                Can be one of cluster, indices or shards. Controls the details 
+        - level:                Can be one of cluster, indices or shards. Controls the details
                                 level of the health information returned. Defaults to cluster.
-        - wait_for_status       One of green, yellow or red. Will wait (until the timeout provided) 
-                                until the status of the cluster changes to the one provided. 
+        - wait_for_status       One of green, yellow or red. Will wait (until the timeout provided)
+                                until the status of the cluster changes to the one provided.
                                 By default, will not wait for any status.
-        - wait_for_relocating_shards     A number controlling to how many relocating shards to 
-                                         wait for. Usually will be 0 to indicate to wait till 
+        - wait_for_relocating_shards     A number controlling to how many relocating shards to
+                                         wait for. Usually will be 0 to indicate to wait till
                                          all relocation have happened. Defaults to not to wait.
-        - timeout       A time based parameter controlling how long to wait if one of the 
+        - timeout       A time based parameter controlling how long to wait if one of the
                         wait_for_XXX are provided. Defaults to 30s.
         """
         path = self._make_path(["_cluster", "health"])
@@ -624,10 +640,10 @@ class ES(object):
                 cmd[optype]['_version'] = version
             if id:
                 cmd[optype]['_id'] = id
-            self.bulk_data.write(json.dumps(cmd, cls=self.encoder))
+            self.bulk_data.write(dump_json(cmd, cls=self.encoder))
             self.bulk_data.write("\n")
             if isinstance(doc, dict):
-                doc = json.dumps(doc, cls=self.encoder)
+                doc = dump_json(doc, cls=self.encoder)
             self.bulk_data.write(doc)
             self.bulk_data.write("\n")
             self.bulk_items += 1
@@ -698,7 +714,7 @@ class ES(object):
         if bulk:
             cmd = { "delete" : { "_index" : index, "_type" : doc_type,
                                 "_id": id}}
-            self.bulk_data.write(json.dumps(cmd, cls=self.encoder))
+            self.bulk_data.write(dump_json(cmd, cls=self.encoder))
             self.bulk_data.write("\n")
             self.bulk_items += 1
             self.flush_bulk()
@@ -744,7 +760,7 @@ class ES(object):
             body = query.to_search_json()
         elif isinstance(query, dict):
             # A direct set of search parameters.
-            body = json.dumps(query, cls=self.encoder)
+            body = dump_json(query, cls=self.encoder)
         else:
             raise pyes.exceptions.InvalidQuery("search() must be supplied with a Search or Query object, or a dict")
 
@@ -782,7 +798,7 @@ class ES(object):
             if isinstance(query, dict):
                 if 'query' in query:
                     query = query['query']
-                query = json.dumps(query, cls=self.encoder)
+                query = dump_json(query, cls=self.encoder)
             elif hasattr(query, "to_query_json"):
                 query = query.to_query_json(inner=True)
         querystring_args = query_params
@@ -823,14 +839,14 @@ class ES(object):
 #        """
 #        Extract terms and their document frequencies from one or more fields.
 #        The fields argument must be a list or tuple of fields.
-#        For valid query params see: 
+#        For valid query params see:
 #        http://www.elasticsearch.com/docs/elasticsearch/rest_api/terms/
 #        """
 #        indexes = self._validate_indexes(indexes)
 #        path = self._make_path([','.join(indexes), "_terms"])
 #        query_params['fields'] = ','.join(fields)
 #        return self._send_request('GET', path, params=query_params)
-#    
+#
     def morelikethis(self, index, doc_type, id, fields, **query_params):
         """
         Execute a "more like this" search query against one or more fields and get back search hits.
@@ -845,5 +861,4 @@ def decode_json(data):
 
 def encode_json(data):
     """ Encode some json to dict"""
-    return json.dumps(data, cls=ESJsonEncoder)
-
+    return dump_json(data, cls=ESJsonEncoder)
